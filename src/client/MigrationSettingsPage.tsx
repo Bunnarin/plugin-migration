@@ -4,15 +4,14 @@ import { Spin, Table, Switch, message, Typography, Input, Button, Card, Space, F
 
 export const MigrationSettingsPage = () => {
   const api = useAPIClient();
-
-  let migrationConfigs = []
-
+  const [migrationConfigs, setMigrationConfigs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<Record<string, boolean>>({});
   const [allCollections, setAllCollections] = useState<any[]>([]);
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [pulling, setPulling] = useState(false);
   const [isBusiness, setIsBusiness] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   const [form] = Form.useForm();
 
@@ -42,9 +41,9 @@ export const MigrationSettingsPage = () => {
         });
         setSettings(settingsMap);
 
-        migrationConfigs = configRes.data.data;
+        setMigrationConfigs(configRes.data.data)
         const configMap: Record<string, string> = {};
-        migrationConfigs.forEach((c: any) => {
+        configRes.data.data.forEach((c: any) => {
           configMap[c.key] = c.value;
         });
         form.setFieldsValue(configMap);
@@ -90,6 +89,53 @@ export const MigrationSettingsPage = () => {
     }
   };
 
+  const handleBatchToggle = async (enabled: boolean) => {
+    if (selectedRowKeys.length === 0) return;
+
+    // Set updating state for all selected keys
+    const updatingUpdates: Record<string, boolean> = {};
+    selectedRowKeys.forEach(k => { updatingUpdates[k as string] = true; });
+    setUpdating(prev => ({ ...prev, ...updatingUpdates }));
+
+    try {
+      // For simplicity, we fire parallel requests for each selected row.
+      // If there are many, we could chunk them or create a bulk API endpoint, 
+      // but NocoBase can handle this concurrently.
+      await Promise.all(
+        selectedRowKeys.map(async (key) => {
+          const collectionName = key as string;
+          if (settings.hasOwnProperty(collectionName)) {
+            await api.request({
+              url: `__migration_sync_settings:update`,
+              method: 'post',
+              params: { filter: { collectionName } },
+              data: { enabled },
+            });
+          } else {
+            await api.request({
+              url: `__migration_sync_settings:create`,
+              method: 'post',
+              data: { collectionName, enabled },
+            });
+          }
+        })
+      );
+
+      const settingsUpdates: Record<string, boolean> = {};
+      selectedRowKeys.forEach(k => { settingsUpdates[k as string] = enabled; });
+      setSettings(prev => ({ ...prev, ...settingsUpdates }));
+      message.success(`Batch updated ${selectedRowKeys.length} settings`);
+      setSelectedRowKeys([]); // clear selection after success
+    } catch (err) {
+      console.error(err);
+      message.error('Failed to update some settings');
+    } finally {
+      const updatingUpdatesDone: Record<string, boolean> = {};
+      selectedRowKeys.forEach(k => { updatingUpdatesDone[k as string] = false; });
+      setUpdating(prev => ({ ...prev, ...updatingUpdatesDone }));
+    }
+  };
+
   const handleSaveConfig = async (key: string, value: string) => {
     try {
       // Create or update the config key
@@ -105,12 +151,11 @@ export const MigrationSettingsPage = () => {
           },
           data: { value },
         });
-        migrationConfigs = migrationConfigs.map((c: any) => {
-          if (c.key === key) {
+        setMigrationConfigs(migrationConfigs.map((c: any) => {
+          if (c.key === key)
             c.value = value;
-          }
           return c;
-        });
+        }));
       } else {
         await api.request({
           url: `__migration_sync_config:create`,
@@ -160,7 +205,7 @@ export const MigrationSettingsPage = () => {
     const isBusiness = c.isBusiness;
 
     let defaultOn = true;
-    if (isBusiness || name === 'environmentVariables' || name === 'authenticators') {
+    if (isBusiness || name === 'environmentVariables' || name === 'authenticators' || name === 'jobs') {
       defaultOn = false;
     }
 
@@ -233,13 +278,32 @@ export const MigrationSettingsPage = () => {
             Configure which tables are exported when this server acts as Production and the `/api/sync:pull` endpoint is called.
             Business collections are not exported with real rows; they trigger mock data generation on the dev side.
           </Typography.Paragraph>
-          <Switch
-            checked={isBusiness}
-            onChange={(checked) => setIsBusiness(checked)}
-            checkedChildren="Business Collections"
-            unCheckedChildren="System Collections"
-          />
+          <Space style={{ marginBottom: 16 }}>
+            <Switch
+              checked={isBusiness}
+              onChange={(checked) => {
+                setIsBusiness(checked);
+                setSelectedRowKeys([]);
+              }}
+              checkedChildren="Business Collections"
+              unCheckedChildren="System Collections"
+            />
+            {selectedRowKeys.length > 0 && (
+              <>
+                <Button onClick={() => handleBatchToggle(true)}>
+                  Enable Selected ({selectedRowKeys.length})
+                </Button>
+                <Button onClick={() => handleBatchToggle(false)} danger>
+                  Disable Selected ({selectedRowKeys.length})
+                </Button>
+              </>
+            )}
+          </Space>
           <Table
+            rowSelection={{
+              selectedRowKeys,
+              onChange: setSelectedRowKeys,
+            }}
             dataSource={tableData.filter(i => i.isBusiness == isBusiness)}
             columns={columns}
             size="small"

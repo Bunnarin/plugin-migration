@@ -17,12 +17,14 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
   const dump = await response.json();
   console.log(`[Sync] Received JSON dump. Applying to local DB...`);
 
-  const qi = app.db.sequelize.getQueryInterface();
-
   // Helper to process bulk inserts
   const insertCollection = async (tableName: string, rows: any[]) => {
     if (!rows || rows.length === 0) return;
     console.log(`[Sync] Restoring table: ${tableName} (${rows.length} rows)`);
+
+    // app.reload() creates a new database connection pool. 
+    // We must grab the fresh query interface dynamically every time.
+    const qi = app.db.sequelize.getQueryInterface();
 
     // Truncate existing data safely
     await qi.bulkDelete(tableName, {}, { truncate: true, cascade: true });
