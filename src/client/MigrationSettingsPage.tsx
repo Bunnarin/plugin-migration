@@ -1,16 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { useAPIClient, useCollections } from '@nocobase/client';
+import { useAPIClient } from '@nocobase/client';
 import { Spin, Table, Switch, message, Typography, Input, Button, Card, Space, Form } from 'antd';
 
 export const MigrationSettingsPage = () => {
   const api = useAPIClient();
-  const collections = useCollections();
-  
+
+  let migrationConfigs = []
+
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<Record<string, boolean>>({});
-  const [businessNames, setBusinessNames] = useState<string[]>([]);
+  const [allCollections, setAllCollections] = useState<any[]>([]);
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [pulling, setPulling] = useState(false);
+  const [isBusiness, setIsBusiness] = useState(false);
 
   const [form] = Form.useForm();
 
@@ -20,21 +22,19 @@ export const MigrationSettingsPage = () => {
       try {
         const [settingsRes, collectionsRes, configRes] = await Promise.all([
           api.request({
-            url: 'migration_sync_settings:list',
+            url: '__migration_sync_settings:list',
             params: { paginate: false },
           }),
           api.request({
-            url: 'collections:list',
-            params: { paginate: false },
+            url: 'sync:listCollections',
           }),
           api.request({
-            url: 'migration_sync_config:list',
+            url: '__migration_sync_config:list',
             params: { paginate: false },
           })
         ]);
-        
-        const bNames = collectionsRes.data.data.map((c: any) => c.name);
-        setBusinessNames(bNames);
+
+        setAllCollections(collectionsRes.data.data || []);
 
         const settingsMap: Record<string, boolean> = {};
         settingsRes.data.data.forEach((s: any) => {
@@ -42,8 +42,9 @@ export const MigrationSettingsPage = () => {
         });
         setSettings(settingsMap);
 
+        migrationConfigs = configRes.data.data;
         const configMap: Record<string, string> = {};
-        configRes.data.data.forEach((c: any) => {
+        migrationConfigs.forEach((c: any) => {
           configMap[c.key] = c.value;
         });
         form.setFieldsValue(configMap);
@@ -63,13 +64,18 @@ export const MigrationSettingsPage = () => {
     try {
       if (settings.hasOwnProperty(collectionName)) {
         await api.request({
-          url: `migration_sync_settings:update/${collectionName}`,
-          method: 'put',
+          url: `__migration_sync_settings:update`,
+          method: 'post',
+          params: {
+            filter: {
+              collectionName
+            }
+          },
           data: { enabled },
         });
       } else {
         await api.request({
-          url: `migration_sync_settings:create`,
+          url: `__migration_sync_settings:create`,
           method: 'post',
           data: { collectionName, enabled },
         });
@@ -88,22 +94,29 @@ export const MigrationSettingsPage = () => {
     try {
       // Create or update the config key
       // NocoBase collection with primaryKey 'key'
-      try {
+      if (migrationConfigs.find((c: any) => c.key === key)) {
         await api.request({
-          url: `migration_sync_config:update/${key}`,
-          method: 'put',
+          url: `__migration_sync_config:update`,
+          method: 'post',
+          params: {
+            filter: {
+              key
+            }
+          },
           data: { value },
         });
-      } catch (e: any) {
-        if (e?.response?.status === 404 || e?.response?.status === 400) {
-          await api.request({
-            url: `migration_sync_config:create`,
-            method: 'post',
-            data: { key, value },
-          });
-        } else {
-          throw e;
-        }
+        migrationConfigs = migrationConfigs.map((c: any) => {
+          if (c.key === key) {
+            c.value = value;
+          }
+          return c;
+        });
+      } else {
+        await api.request({
+          url: `__migration_sync_config:create`,
+          method: 'post',
+          data: { key, value },
+        });
       }
       message.success(`Saved ${key}`);
     } catch (err) {
@@ -118,7 +131,7 @@ export const MigrationSettingsPage = () => {
       message.warning('Production URL and Pull Key are required to pull data.');
       return;
     }
-    
+
     setPulling(true);
     try {
       await api.request({
@@ -142,10 +155,10 @@ export const MigrationSettingsPage = () => {
     return <Spin style={{ margin: 24 }} />;
   }
 
-  const tableData = collections.map(c => {
+  const tableData = allCollections.map(c => {
     const name = c.name;
-    const isBusiness = businessNames.includes(name);
-    
+    const isBusiness = c.isBusiness;
+
     let defaultOn = true;
     if (isBusiness || name === 'environmentVariables' || name === 'authenticators') {
       defaultOn = false;
@@ -174,18 +187,13 @@ export const MigrationSettingsPage = () => {
       key: 'title',
     },
     {
-      title: 'Type',
-      key: 'type',
-      render: (_, record) => record.isBusiness ? 'User Created (Business)' : 'System',
-    },
-    {
       title: 'Sync Export Enabled',
       key: 'action',
       render: (_, record) => (
-        <Switch 
-          checked={record.enabled} 
+        <Switch
+          checked={record.enabled}
           loading={updating[record.name]}
-          onChange={(checked) => handleToggle(record.name, checked)} 
+          onChange={(checked) => handleToggle(record.name, checked)}
         />
       ),
     },
@@ -194,23 +202,23 @@ export const MigrationSettingsPage = () => {
   return (
     <div style={{ padding: 24, background: '#f0f2f5', minHeight: '100vh' }}>
       <Space direction="vertical" style={{ width: '100%' }} size="large">
-        <Card title="Database Pull Operation" bordered={false}>
+        <Card title="Database Pull Operation">
           <Form form={form} layout="vertical">
             <Form.Item label="Production URL (Dev Side)" name="prodUrl">
-              <Input 
-                placeholder="https://prod.example.com" 
+              <Input
+                placeholder="https://prod.example.com"
                 onBlur={(e) => handleSaveConfig('prodUrl', e.target.value)}
               />
             </Form.Item>
             <Form.Item label="Pull Key (Used by both Dev and Prod)" name="pullKey">
-              <Input.Password 
-                placeholder="Secret pull key" 
+              <Input.Password
+                placeholder="Secret pull key"
                 onBlur={(e) => handleSaveConfig('pullKey', e.target.value)}
               />
             </Form.Item>
             <Form.Item label="Push Key (Prod Side Only)" name="pushKey">
-              <Input.Password 
-                placeholder="Secret push key (Reserved for future)" 
+              <Input.Password
+                placeholder="Secret push key (Reserved for future)"
                 onBlur={(e) => handleSaveConfig('pushKey', e.target.value)}
               />
             </Form.Item>
@@ -220,16 +228,22 @@ export const MigrationSettingsPage = () => {
           </Form>
         </Card>
 
-        <Card title="Production Export Settings" bordered={false}>
+        <Card title="Production Export Settings">
           <Typography.Paragraph>
             Configure which tables are exported when this server acts as Production and the `/api/sync:pull` endpoint is called.
             Business collections are not exported with real rows; they trigger mock data generation on the dev side.
           </Typography.Paragraph>
-          <Table 
-            dataSource={tableData} 
-            columns={columns} 
-            pagination={{ pageSize: 100 }} 
+          <Switch
+            checked={isBusiness}
+            onChange={(checked) => setIsBusiness(checked)}
+            checkedChildren="Business Collections"
+            unCheckedChildren="System Collections"
+          />
+          <Table
+            dataSource={tableData.filter(i => i.isBusiness == isBusiness)}
+            columns={columns}
             size="small"
+            pagination={false}
           />
         </Card>
       </Space>

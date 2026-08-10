@@ -2,14 +2,14 @@ import { faker } from '@faker-js/faker';
 
 export async function generateMockData(collection: any, count = 10) {
   const mockRows: any[] = [];
-  
+
   for (let i = 0; i < count; i++) {
     const row: Record<string, any> = {};
     for (const [fieldName, field] of collection.fields) {
       if (field.primaryKey || field.autoIncrement) continue;
-      
+
       const type = field.type;
-      
+
       try {
         if (type === 'string') {
           row[fieldName] = faker.lorem.word();
@@ -31,19 +31,19 @@ export async function generateMockData(collection: any, count = 10) {
           // If it's a required relation, try to get a random ID from the target collection.
           // This is a best effort approach.
           if (field.required && field.target) {
-             const targetRepo = collection.db.getRepository(field.target);
-             if (targetRepo) {
-                // Pick a random row
-                const randomTarget = await targetRepo.findOne({ order: collection.db.sequelize.random() });
-                if (randomTarget) {
-                  row[field.foreignKey || fieldName] = randomTarget[targetRepo.collection.model.primaryKeyAttributes[0]];
-                }
-             }
+            const targetRepo = collection.db.getRepository(field.target);
+            if (targetRepo) {
+              // Pick a random row
+              const randomTarget = await targetRepo.findOne({ order: collection.db.sequelize.random() });
+              if (randomTarget) {
+                row[field.foreignKey || fieldName] = randomTarget[targetRepo.collection.model.primaryKeyAttributes[0]];
+              }
+            }
           }
         } else if (type === 'enum' || type === 'choices') {
           if (field.choices && field.choices.length > 0) {
-             const randomChoice = faker.helpers.arrayElement(field.choices);
-             row[fieldName] = randomChoice.value;
+            const randomChoice = faker.helpers.arrayElement(field.choices) as { value: any };
+            row[fieldName] = randomChoice.value;
           }
         }
       } catch (err) {

@@ -1,9 +1,9 @@
-import { generateMockData } from './mock-data';
+// import { chunk } from 'lodash';
 
 export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
-  console.log(`[Sync] Fetching data from ${prodUrl}...`);
+  console.log(`[Sync] Fetching JSON dump from ${prodUrl}...`);
   const baseUrl = prodUrl.replace(/\/$/, '');
-  
+
   const response = await fetch(`${baseUrl}/api/sync:pull`, {
     headers: {
       'X-Sync-Key': pullKey,
@@ -14,56 +14,63 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
     throw new Error(`Server responded with ${response.status}: ${await response.text()}`);
   }
 
-  const data = await response.json();
-  const receivedCollections = Object.keys(data);
-  console.log(`[Sync] Received ${receivedCollections.length} collections. Beginning selective overwrite...`);
+  const dump = await response.json();
+  console.log(`[Sync] Received JSON dump. Applying to local DB...`);
 
-  const userCollections = await app.db.getRepository('collections').find();
-  const businessNames = userCollections.map((c: any) => c.name);
+  const qi = app.db.sequelize.getQueryInterface();
 
-  for (const collectionName of receivedCollections) {
-    const rows = data[collectionName];
-    const collection = app.db.getCollection(collectionName);
-    
-    if (!collection) {
-      console.warn(`[Sync] Collection ${collectionName} not found locally, skipping...`);
-      continue;
-    }
+  // Helper to process bulk inserts
+  const insertCollection = async (tableName: string, rows: any[]) => {
+    if (!rows || rows.length === 0) return;
+    console.log(`[Sync] Restoring table: ${tableName} (${rows.length} rows)`);
 
-    console.log(`[Sync] Syncing collection ${collectionName}...`);
-    await collection.repository.destroy({ truncate: true });
+    // Truncate existing data safely
+    await qi.bulkDelete(tableName, {}, { truncate: true, cascade: true });
 
-    if (collectionName === 'applicationPlugins') {
-      for (const pluginRow of rows) {
-        await collection.repository.create({ values: pluginRow });
-        if (pluginRow.enabled) {
-          await collection.repository.update({ 
-            filter: { name: pluginRow.name }, 
-            values: { enabled: false } 
-          });
-
-          if (!app.pm.has(pluginRow.name)) {
-            console.error(`[Sync] FATAL: Pulled plugin ${pluginRow.name} is enabled on prod but not installed locally.`);
-            throw new Error(`Plugin ${pluginRow.name} missing locally.`);
-          }
-          
-          console.log(`[Sync] Running enable hooks for plugin: ${pluginRow.name}...`);
-          await app.pm.enable(pluginRow.name);
+    // Fix null sort values and stringify JSON objects for low-level bulkInsert
+    rows.forEach((r, idx) => {
+      if (Object.prototype.hasOwnProperty.call(r, 'sort') && r.sort === null) {
+        r.sort = idx + 1;
+      }
+      for (const key of Object.keys(r)) {
+        const val = r[key];
+        // Sequelize's queryInterface.bulkInsert doesn't know column types.
+        // It throws 'Invalid value' if it encounters a plain JS object/array.
+        // We must stringify them so the pg driver accepts them for JSONB columns.
+        if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+          r[key] = JSON.stringify(val);
         }
       }
-      continue;
-    }
+    });
 
-    if (businessNames.includes(collectionName)) {
-       console.log(`[Sync] Business collection ${collectionName} detected. Generating mock data...`);
-       const mockRows = await generateMockData(collection, 10);
-       if (mockRows.length > 0) {
-         await collection.repository.create({ values: mockRows });
-       }
-    } else if (rows.length > 0) {
-       await collection.repository.create({ values: rows });
-    }
+    // Chunk the inserts to avoid memory spikes / query size limits
+    await qi.bulkInsert(tableName, rows);
+    // const batches = chunk(rows, 1000);
+    // for (const batch of batches) {
+    //   await qi.bulkInsert(tableName, batch);
+    // }
+  };
+
+  // 1. Process System Collections
+  // We must process these first so NocoBase learns about schema changes (new tables/columns)
+  for (const [tableName, rows] of Object.entries(dump.system || {})) {
+    await insertCollection(tableName, rows as any[]);
   }
-  console.log('[Sync] Sync completed successfully.');
+
+  // 2. Trigger NocoBase Schema Evolution
+  console.log(`[Sync] Reloading app to ingest new schema metadata...`);
+  await app.reload();
+  await (app.db.getRepository('collections') as any).load();
+
+  console.log(`[Sync] Synchronizing physical database schema...`);
+  await app.db.sync(); // Creates any missing tables or columns on the dev side
+
+  // 3. Process Business Collections
+  for (const [tableName, rows] of Object.entries(dump.business || {})) {
+    await insertCollection(tableName, rows as any[]);
+  }
+
+  console.log('[Sync] Import completed successfully. Restarting server...');
+  setTimeout(() => process.exit(0), 500);
   return true;
 }
