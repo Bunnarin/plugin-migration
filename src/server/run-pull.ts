@@ -1,6 +1,9 @@
 // import { chunk } from 'lodash';
 
 export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
+  if (process.env.APP_ENV !== 'development')
+    throw new Error('APP_ENV must be development to run this action');
+
   console.log(`[Sync] Fetching dump from ${prodUrl}...`);
   const baseUrl = prodUrl.replace(/\/$/, '');
 

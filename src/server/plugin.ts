@@ -51,8 +51,12 @@ export class PluginMigrationServer extends Plugin {
         if (isEnabled) {
           // Use raw SQL — returns plain JS objects with physical column names, no Sequelize overhead
           // sequelize.query returns [rows, metadata] tuple; QueryTypes.SELECT makes rows be plain objects
+          // do this cuz we can't have the dev to insert value into generated columns
+          const columns = await this.getNonGeneratedColumns(this.app.db.sequelize, tableName);
+          const columnList = columns.map((c) => `"${c}"`).join(', ');
+
           const [rows] = (await this.app.db.sequelize.query(
-            `SELECT * FROM "${tableName}"`,
+            `SELECT ${columnList} FROM "${tableName}"`,
             { raw: true },
           )) as [Record<string, any>[], unknown];
 
@@ -140,6 +144,20 @@ export class PluginMigrationServer extends Plugin {
           process.exit(1);
         }
       });
+  }
+
+  async getNonGeneratedColumns(sequelize: any, tableName: string, schema = 'public'): Promise<string[]> {
+    const [cols] = (await sequelize.query(
+      `SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = :schema
+        AND table_name = :tableName
+        AND is_generated = 'NEVER'
+      ORDER BY ordinal_position`,
+      { replacements: { schema, tableName }, raw: true },
+    )) as [{ column_name: string }[], unknown];
+
+    return cols.map((c) => c.column_name);
   }
 }
 
