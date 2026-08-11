@@ -1,14 +1,18 @@
 {
   "name": "@bunnarin/plugin-migration",
-  "version": "2.1.31",
+  "version": "2.1.32",
   "main": "dist/server/index.js",
-  "dependencies": {
-    "@faker-js/faker": "^8.0.0"
-  },
   "peerDependencies": {
     "@nocobase/client": "2.x",
     "@nocobase/client-v2": "2.x",
     "@nocobase/server": "2.x",
     "@nocobase/test": "2.x"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bunnarin/plugin-migration"
   }
 }

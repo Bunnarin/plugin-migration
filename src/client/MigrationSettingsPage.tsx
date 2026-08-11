@@ -151,11 +151,7 @@ export const MigrationSettingsPage = () => {
           },
           data: { value },
         });
-        setMigrationConfigs(migrationConfigs.map((c: any) => {
-          if (c.key === key)
-            c.value = value;
-          return c;
-        }));
+        setMigrationConfigs(prev => [...prev, { key, value }]);
       } else {
         await api.request({
           url: `__migration_sync_config:create`,
@@ -259,12 +255,6 @@ export const MigrationSettingsPage = () => {
               <Input.Password
                 placeholder="Secret pull key"
                 onBlur={(e) => handleSaveConfig('pullKey', e.target.value)}
-              />
-            </Form.Item>
-            <Form.Item label="Push Key (Prod Side Only)" name="pushKey">
-              <Input.Password
-                placeholder="Secret push key (Reserved for future)"
-                onBlur={(e) => handleSaveConfig('pushKey', e.target.value)}
               />
             </Form.Item>
             <Button type="primary" onClick={handlePull} loading={pulling}>

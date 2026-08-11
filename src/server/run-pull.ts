@@ -1,7 +1,7 @@
 // import { chunk } from 'lodash';
 
 export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
-  console.log(`[Sync] Fetching JSON dump from ${prodUrl}...`);
+  console.log(`[Sync] Fetching dump from ${prodUrl}...`);
   const baseUrl = prodUrl.replace(/\/$/, '');
 
   const response = await fetch(`${baseUrl}/api/sync:pull`, {
@@ -15,9 +15,26 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
   }
 
   const dump = await response.json();
-  console.log(`[Sync] Received JSON dump. Applying to local DB...`);
+  console.log(`[Sync] Received dump. Applying to local DB...`);
+
+  // 0.  user must enable manually
+  const plugins = dump.system?.applicationPlugins || [];
+  const pluginsToBePulled = plugins.filter(plugin => plugin.enabled && !app.pm.has(plugin.packageName)).map(plugin => plugin.packageName);
+  if (pluginsToBePulled.length > 0) {
+    for (const packageName of pluginsToBePulled) {
+      try {
+        console.log('pulling: ', packageName)
+        await app.pm.pull(packageName, { registry: 'https://registry.npmjs.org/', packageName })
+      } catch {
+        console.log("couldn't pull ", packageName)
+      }
+    }
+    console.log('enabling everything')
+    await app.pm.enable('*')
+  }
 
   // Helper to process bulk inserts
+  // do applicationPlugins first and exlude it from the loop
   const insertCollection = async (tableName: string, rows: any[]) => {
     if (!rows || rows.length === 0) return;
     console.log(`[Sync] Restoring table: ${tableName} (${rows.length} rows)`);
@@ -56,6 +73,8 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
   // 1. Process System Collections
   // We must process these first so NocoBase learns about schema changes (new tables/columns)
   for (const [tableName, rows] of Object.entries(dump.system || {})) {
+    if (tableName == 'applicationPlugins')
+      continue
     await insertCollection(tableName, rows as any[]);
   }
 

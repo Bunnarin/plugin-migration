@@ -35,7 +35,11 @@ export class PluginMigrationServer extends Plugin {
         let isEnabled = true;
         if (setting) {
           isEnabled = setting.enabled;
-        } else if (businessNames.includes(name) || name === 'environmentVariables' || name === 'authenticators') {
+        } else if (!businessNames.includes(name) && !['environmentVariables', 'authenticators', 'jobs'].includes(name)) {
+          // system = true by default
+          isEnabled = true;
+        } else if (businessNames.includes(name)) {
+          // business = false by default
           isEnabled = false;
         }
 
@@ -66,7 +70,6 @@ export class PluginMigrationServer extends Plugin {
       ctx.body = JSON.stringify(dump);
       await next();
     };
-
     // Action handler for triggering a pull from the UI
     const runPullAction = async (ctx, next) => {
       const { prodUrl, pullKey } = ctx.request.body;
