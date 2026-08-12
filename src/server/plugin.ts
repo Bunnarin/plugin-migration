@@ -48,24 +48,22 @@ export class PluginMigrationServer extends Plugin {
         const tableName = collection.model.tableName;
 
         // Skip real rows for business collections if not enabled, but here we only query if enabled
-        if (isEnabled) {
-          // Use raw SQL — returns plain JS objects with physical column names, no Sequelize overhead
-          // sequelize.query returns [rows, metadata] tuple; QueryTypes.SELECT makes rows be plain objects
-          // do this cuz we can't have the dev to insert value into generated columns
-          const columns = await this.getNonGeneratedColumns(this.app.db.sequelize, tableName);
-          const columnList = columns.map((c) => `"${c}"`).join(', ');
+        // Use raw SQL — returns plain JS objects with physical column names, no Sequelize overhead
+        // sequelize.query returns [rows, metadata] tuple; QueryTypes.SELECT makes rows be plain objects
+        // do this cuz we can't have the dev to insert value into generated columns
+        const columns = await this.getNonGeneratedColumns(this.app.db.sequelize, tableName);
+        const columnList = columns.map((c) => `"${c}"`).join(', ');
 
-          const [rows] = (await this.app.db.sequelize.query(
-            `SELECT ${columnList} FROM "${tableName}"`,
-            { raw: true },
-          )) as [Record<string, any>[], unknown];
+        const [rows] = (await this.app.db.sequelize.query(
+          `SELECT ${columnList} FROM "${tableName}"`,
+          { raw: true },
+        )) as [Record<string, any>[], unknown];
 
-          const isSystem = !businessNames.includes(name);
-          if (isSystem) {
-            dump.system[tableName] = rows;
-          } else {
-            dump.business[tableName] = rows;
-          }
+        const isSystem = !businessNames.includes(name);
+        if (isSystem) {
+          dump.system[tableName] = rows;
+        } else {
+          dump.business[tableName] = rows;
         }
       }
 
