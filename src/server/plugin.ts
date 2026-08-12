@@ -144,18 +144,35 @@ export class PluginMigrationServer extends Plugin {
       });
   }
 
-  async getNonGeneratedColumns(sequelize: any, tableName: string, schema = 'public'): Promise<string[]> {
-    const [cols] = (await sequelize.query(
+  async getNonGeneratedColumns(
+    sequelize: any,
+    tableName: string,
+    schema = 'public',
+  ): Promise<string[]> {
+    const [physicalCols] = (await sequelize.query(
       `SELECT column_name
-      FROM information_schema.columns
-      WHERE table_schema = :schema
-        AND table_name = :tableName
-        AND is_generated = 'NEVER'
-      ORDER BY ordinal_position`,
+     FROM information_schema.columns
+     WHERE table_schema = :schema
+       AND table_name = :tableName
+       AND is_generated = 'NEVER'
+     ORDER BY ordinal_position`,
       { replacements: { schema, tableName }, raw: true },
     )) as [{ column_name: string }[], unknown];
 
-    return cols.map((c) => c.column_name);
+    const [fieldRows] = (await sequelize.query(
+      `SELECT name
+     FROM fields
+     WHERE "collectionName" = :tableName`,
+      { replacements: { tableName }, raw: true },
+    )) as [{ name: string }[], unknown];
+
+    // NocoBase fields can map to a different physical column via `field`;
+    // fall back to `name` when no explicit column override is set.
+    const registeredColumns = new Set(fieldRows.map((f) => f.name));
+
+    return physicalCols
+      .map((c) => c.column_name)
+      .filter((col) => registeredColumns.has(col));
   }
 }
 
