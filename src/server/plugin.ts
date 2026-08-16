@@ -167,7 +167,6 @@ export class PluginMigrationServer extends Plugin {
     )) as [{ name: string }[], unknown];
 
     // NocoBase fields can map to a different physical column via `field`;
-    // fall back to `name` when no explicit column override is set.
     const registeredColumns = new Set(fieldRows.map((f) => f.name));
 
     return physicalCols

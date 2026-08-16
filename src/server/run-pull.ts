@@ -94,6 +94,34 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
     await insertCollection(tableName, rows as any[]);
   }
 
+  // set the highest ID as the nextval
+  await app.db.sequelize.query(`
+    DO $$
+      DECLARE
+          r RECORD;
+      BEGIN
+          FOR r IN
+              SELECT table_schema, table_name, column_name
+              FROM information_schema.columns
+              WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                AND (
+                    column_default LIKE 'nextval%'
+                    OR is_identity = 'YES'
+                )
+          LOOP
+              EXECUTE format(
+                  'SELECT setval(pg_get_serial_sequence(%L, %L), COALESCE(MAX(%s), 1), MAX(%s) IS NOT NULL) FROM %s.%s',
+                  r.table_schema || '.' || quote_ident(r.table_name),
+                  quote_ident(r.column_name),
+                  quote_ident(r.column_name),
+                  quote_ident(r.column_name),
+                  quote_ident(r.table_schema),
+                  quote_ident(r.table_name)
+              );
+          END LOOP;
+      END $$;
+  `)
+
   console.log('[Sync] Import completed successfully. Restarting server...');
   setTimeout(() => process.exit(0), 500);
   return true;
