@@ -1,9 +1,6 @@
-// import { chunk } from 'lodash';
+import type { Application } from '@nocobase/server';
 
-export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
-  if (process.env.APP_ENV !== 'development')
-    throw new Error('APP_ENV must be development to run this action');
-
+export async function runSyncPull(app: Application, prodUrl: string, pullKey: string) {
   console.log(`[Sync] Fetching dump from ${prodUrl}...`);
   const baseUrl = prodUrl.replace(/\/$/, '');
 
@@ -28,12 +25,11 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
       try {
         console.log('pulling: ', packageName)
         await app.pm.pull(packageName, { registry: 'https://registry.npmjs.org/', packageName })
+        await app.pm.enable(packageName)
       } catch {
-        console.log("couldn't pull ", packageName)
+        console.log("couldn't pull/enable ", packageName)
       }
     }
-    console.log('enabling everything')
-    await app.pm.enable('*')
   }
 
   // Helper to process bulk inserts
@@ -47,7 +43,7 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
     const qi = app.db.sequelize.getQueryInterface();
 
     // Truncate existing data safely
-    await qi.bulkDelete(tableName, {}, { truncate: true, cascade: true });
+    await qi.bulkDelete(tableName, {});
 
     // Fix null sort values and stringify JSON objects for low-level bulkInsert
     rows.forEach((r, idx) => {
@@ -121,6 +117,15 @@ export async function runSyncPull(app: any, prodUrl: string, pullKey: string) {
           END LOOP;
       END $$;
   `)
+
+  // change the root password to be the pullkey
+  const userRepo = app.db.getRepository('users');
+  const user = await userRepo.findOne({ filterByTk: 1 });
+  if (user) {
+    console.log('[Sync] changing root password to ', pullKey)
+    user.set('password', pullKey)
+    await user.save()
+  }
 
   console.log('[Sync] Import completed successfully. Restarting server...');
   setTimeout(() => process.exit(0), 500);
