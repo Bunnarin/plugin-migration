@@ -54,10 +54,10 @@ export class PluginMigrationServer extends Plugin {
         const columns = await this.getNonGeneratedColumns(this.app.db.sequelize, tableName);
         const columnList = columns.map((c) => `"${c}"`).join(', ');
 
-        const [rows] = (await this.app.db.sequelize.query(
+        const [rows] = await this.app.db.sequelize.query(
           `SELECT ${columnList} FROM "${tableName}"`,
           { raw: true },
-        )) as [Record<string, any>[], unknown];
+        )
 
         const isSystem = !businessNames.includes(name);
         if (isSystem) {
@@ -149,29 +149,38 @@ export class PluginMigrationServer extends Plugin {
     tableName: string,
     schema = 'public',
   ): Promise<string[]> {
+    // Use pg_catalog instead of information_schema — pg_attribute.attgenerated
+    // is stable across all PostgreSQL versions ('' = normal, 's' = stored generated).
+    // information_schema.columns.is_generated changed behavior in PG 18.
     const [physicalCols] = (await sequelize.query(
-      `SELECT column_name
-     FROM information_schema.columns
-     WHERE table_schema = :schema
-       AND table_name = :tableName
-       AND is_generated = 'NEVER'
-     ORDER BY ordinal_position`,
+      `SELECT a.attname AS column_name
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = :schema
+         AND c.relname = :tableName
+         AND a.attnum > 0
+         AND NOT a.attisdropped
+         AND a.attgenerated = ''
+       ORDER BY a.attnum`,
       { replacements: { schema, tableName }, raw: true },
     )) as [{ column_name: string }[], unknown];
 
+    const allPhysical = physicalCols.map((c) => c.column_name);
+    if (allPhysical.length === 0) return [];
+
+    // Try to narrow to only fields registered in NocoBase's fields table.
+    // For business collections the collectionName != tableName, so fall back
+    // to all physical columns when nothing matches.
     const [fieldRows] = (await sequelize.query(
-      `SELECT name
-     FROM fields
-     WHERE "collectionName" = :tableName`,
+      `SELECT name FROM fields WHERE "collectionName" = :tableName`,
       { replacements: { tableName }, raw: true },
-    )) as [{ name: string }[], unknown];
+    ).catch(() => [[]])) as [{ name: string }[], unknown];
 
-    // NocoBase fields can map to a different physical column via `field`;
-    const registeredColumns = new Set(fieldRows.map((f) => f.name));
+    if ((fieldRows as any[]).length === 0) return allPhysical;
 
-    return physicalCols
-      .map((c) => c.column_name)
-      .filter((col) => registeredColumns.has(col));
+    const filtered = allPhysical.filter((col) => fieldRows.some((f) => f.name === col));
+    return filtered.length > 0 ? filtered : allPhysical;
   }
 }
 

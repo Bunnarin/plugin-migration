@@ -1,6 +1,6 @@
 {
   "name": "@bunnarin/plugin-migration",
-  "version": "2.1.37",
+  "version": "2.1.40",
   "main": "dist/server/index.js",
   "peerDependencies": {
     "@nocobase/client": "2.x",

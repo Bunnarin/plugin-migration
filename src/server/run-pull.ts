@@ -10,9 +10,8 @@ export async function runSyncPull(app: Application, prodUrl: string, pullKey: st
     },
   });
 
-  if (!response.ok) {
+  if (!response.ok)
     throw new Error(`Server responded with ${response.status}: ${await response.text()}`);
-  }
 
   const dump = await response.json();
   console.log(`[Sync] Received dump. Applying to local DB...`);
@@ -45,11 +44,28 @@ export async function runSyncPull(app: Application, prodUrl: string, pullKey: st
     // Truncate existing data safely
     await qi.bulkDelete(tableName, {});
 
-    // Fix null sort values and stringify JSON objects for low-level bulkInsert
+    let targetTableColumns: any = {};
+    try {
+      targetTableColumns = await qi.describeTable(tableName);
+    } catch (e) {
+      console.warn(`[Sync] Could not describe table ${tableName}`, e.message);
+    }
+    const hasCreatedAt = 'createdAt' in targetTableColumns;
+    const hasUpdatedAt = 'updatedAt' in targetTableColumns;
+    const now = new Date();
+
+    // Fix null sort values, auto-fill timestamps, and stringify JSON objects
     rows.forEach((r, idx) => {
       if (Object.prototype.hasOwnProperty.call(r, 'sort') && r.sort === null) {
         r.sort = idx + 1;
       }
+      if (hasCreatedAt && r.createdAt === undefined) {
+        r.createdAt = now;
+      }
+      if (hasUpdatedAt && r.updatedAt === undefined) {
+        r.updatedAt = now;
+      }
+
       for (const key of Object.keys(r)) {
         const val = r[key];
         // Sequelize's queryInterface.bulkInsert doesn't know column types.
@@ -63,10 +79,6 @@ export async function runSyncPull(app: Application, prodUrl: string, pullKey: st
 
     // Chunk the inserts to avoid memory spikes / query size limits
     await qi.bulkInsert(tableName, rows);
-    // const batches = chunk(rows, 1000);
-    // for (const batch of batches) {
-    //   await qi.bulkInsert(tableName, batch);
-    // }
   };
 
   // 1. Process System Collections
